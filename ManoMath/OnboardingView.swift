@@ -6,88 +6,42 @@ struct OnboardingView: View {
     let onFinish: () -> Void
 
     @State private var currentPage = 0
-    @State private var navigatingForward = true
-    @StateObject private var practiceVM = PracticeViewModel()
-
-    private var showCamera: Bool { currentPage >= 6 }
 
     var body: some View {
         ZStack {
             Color.appBackground
                 .ignoresSafeArea()
 
-            // Persistent camera layer for all practice screens
-            if showCamera {
-                CameraPreviewView(session: practiceVM.cameraManager.captureSession)
-                    .ignoresSafeArea()
-
-                LinearGradient(
-                    colors: [
-                        Color.black.opacity(0.85),
-                        Color.black.opacity(0.45),
-                        Color.black.opacity(0.85)
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .ignoresSafeArea()
-                .allowsHitTesting(false)
-            }
-
             switch currentPage {
             case 0:
                 StoryScreen1(onContinue: { goToPage(1) }, onSkip: onFinish)
                     .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
             case 1:
-                StoryScreen2(onContinue: { goToPage(2) })
+                StoryScreen4(onContinue: { goToPage(2) })
                     .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
             case 2:
-                StoryScreen3(onContinue: { goToPage(3) })
+                SetupScreen(onContinue: { goToPage(3) })
                     .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
             case 3:
-                StoryScreen4(onContinue: { goToPage(4) })
-                    .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
-            case 4:
-                SetupScreen(onContinue: { goToPage(5) })
-                    .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
-            case 5:
-                CameraWarmupScreen(cameraManager: practiceVM.cameraManager, onReady: { goToPage(6) })
-                    .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
-            case 6:
-                PracticeScreen(practiceVM: practiceVM, targetNumber: 4, headline: "Show 4 fingers", onComplete: { goToPage(7) })
-                    .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
-            case 7:
-                PracticeScreen(practiceVM: practiceVM, targetNumber: 8, headline: "What about an 8?", subtitle: "Use both hands!", onComplete: { goToPage(8) })
-                    .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
-            case 8:
-                PracticeScreen(practiceVM: practiceVM, targetNumber: 7, headline: "3 + 4 = ?", subtitle: "Show the answer!", onComplete: { goToPage(9) })
-                    .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
-            case 9:
-                PracticeScreen(practiceVM: practiceVM, targetNumber: 0, headline: "Now show a 0", subtitle: "Close your fist!", icon: "✊", onComplete: { goToPage(10) })
-                    .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
-            case 10:
-                TwoDigitPracticeScreen(practiceVM: practiceVM, onComplete: { goToPage(11) })
-                    .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
-            case 11:
-                UndoPracticeScreen(practiceVM: practiceVM, onComplete: onFinish)
+                TutorialView(onFinish: onFinish)
                     .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
             default:
                 EmptyView()
             }
-        }
-        .onChange(of: currentPage) { _, newPage in
-            if newPage == 5 {
-                practiceVM.start()
-            }
-        }
 
-        .onDisappear {
-            practiceVM.stop()
+            // Dots for pages 0-2 only (TutorialView handles its own)
+            if currentPage < 3 {
+                VStack {
+                    Spacer()
+                    PageDots(current: currentPage, total: 3)
+                        .padding(.bottom, 20)
+                }
+                .allowsHitTesting(false)
+            }
         }
     }
 
     private func goToPage(_ page: Int) {
-        navigatingForward = page > currentPage
         withAnimation(DesignTokens.springGentle) {
             currentPage = page
         }
@@ -221,210 +175,6 @@ private struct FloatingDigitView: View {
                     try? await Task.sleep(for: .seconds(duration + 0.05))
                 }
             }
-    }
-}
-
-// MARK: - Story Screen 2: The Problem
-
-private struct StoryScreen2: View {
-    let onContinue: () -> Void
-
-    @State private var showHeadline = false
-    @State private var showBadge = [false, false, false]
-    @State private var showBody = false
-    @State private var showButton = false
-    @State private var symbolPhase = false
-
-    private let scenarios: [(icon: String, label: String)] = [
-        ("fork.knife",  "Splitting a restaurant bill"),
-        ("cart",        "Calculating a discount"),
-        ("clock",       "Quick estimates on the go"),
-    ]
-    private let opDurations: [Double] = [3.5, 4.1, 3.9, 5.0, 4.6, 3.3, 4.8, 3.7]
-    private let ops: [(String, CGFloat, CGFloat)] = [
-        ("+", 0.10, 0.18), ("−", 0.88, 0.12), ("×", 0.05, 0.55),
-        ("÷", 0.92, 0.60), ("+", 0.50, 0.08), ("×", 0.78, 0.88),
-        ("−", 0.22, 0.82), ("÷", 0.65, 0.30),
-    ]
-
-    var body: some View {
-        ZStack {
-            Color.appBackground.ignoresSafeArea()
-
-            // Ambient operator symbols
-            GeometryReader { geo in
-                ForEach(Array(ops.enumerated()), id: \.offset) { index, op in
-                    Text(op.0)
-                        .font(.system(size: scaled(28), weight: .bold, design: .rounded))
-                        .foregroundColor(.textSecondary.opacity(symbolPhase ? 0.09 : 0.03))
-                        .position(x: geo.size.width * op.1, y: geo.size.height * op.2)
-                        .animation(
-                            .easeInOut(duration: opDurations[index])
-                                .repeatForever(autoreverses: true)
-                                .delay(Double(index) * 0.35),
-                            value: symbolPhase
-                        )
-                }
-            }
-            .ignoresSafeArea()
-
-            VStack(spacing: 0) {
-                Spacer()
-
-                Text("Everything\nis instant.")
-                    .font(.system(size: scaled(46), weight: .bold, design: .rounded))
-                    .foregroundColor(.textPrimary)
-                    .multilineTextAlignment(.center)
-                    .opacity(showHeadline ? 1 : 0)
-                    .scaleEffect(showHeadline ? 1 : 0.9)
-
-                Spacer().frame(height: 40)
-
-                VStack(spacing: 12) {
-                    ForEach(Array(scenarios.enumerated()), id: \.offset) { index, s in
-                        HStack(spacing: 14) {
-                            Image(systemName: s.icon)
-                                .font(.system(size: scaled(18), weight: .medium))
-                                .foregroundColor(.accentPrimary)
-                                .frame(width: 26)
-                            Text(s.label)
-                                .font(.system(size: scaled(16), weight: .medium, design: .rounded))
-                                .foregroundColor(.textSecondary)
-                            Spacer()
-                        }
-                        .padding(.horizontal, 18).padding(.vertical, 14)
-                        .background(
-                            RoundedRectangle(cornerRadius: DesignTokens.radiusMedium)
-                                .fill(Color.cardBackground)
-                                .overlay(RoundedRectangle(cornerRadius: DesignTokens.radiusMedium)
-                                    .stroke(Color.borderFaint, lineWidth: 1))
-                        )
-                        .scaleEffect(showBadge[index] ? 1 : 0.88)
-                        .opacity(showBadge[index] ? 1 : 0)
-                        .offset(x: showBadge[index] ? 0 : -24)
-                    }
-                }
-                .padding(.horizontal, 28)
-
-                Spacer().frame(height: 32)
-
-                Text("Your brain still handles all of this.\nBut convenience has quietly\ntrained it to forget.")
-                    .font(.system(size: scaled(16), weight: .regular, design: .rounded))
-                    .foregroundColor(.textSecondary)
-                    .multilineTextAlignment(.center)
-                    .opacity(showBody ? 1 : 0)
-                    .offset(y: showBody ? 0 : 8)
-
-                Spacer()
-
-                Button(action: onContinue) {
-                    Text("Continue").primaryButtonStyle()
-                }
-                .padding(.bottom, 50)
-                .opacity(showButton ? 1 : 0)
-                .offset(y: showButton ? 0 : 16)
-            }
-        }
-        .onAppear {
-            symbolPhase = true
-            withAnimation(DesignTokens.springGentle.delay(0.3)) { showHeadline = true }
-            for i in 0..<3 {
-                withAnimation(DesignTokens.springBouncy.delay(1.1 + Double(i) * 0.45)) {
-                    showBadge[i] = true
-                }
-            }
-            withAnimation(DesignTokens.springGentle.delay(2.6)) { showBody = true }
-            withAnimation(DesignTokens.springGentle.delay(3.1)) { showButton = true }
-        }
-    }
-}
-
-// MARK: - Story Screen 3: The History
-
-private struct StoryScreen3: View {
-    let onContinue: () -> Void
-
-    @State private var showHand = [false, false, false]
-    @State private var breathe = false
-    @State private var showHeadline = false
-    @State private var showBody = false
-    @State private var showButton = false
-
-    private let handIcons   = ["hand.point.up.left.fill", "hand.raised.fill", "hand.raised.fingers.spread.fill"]
-    private let breatheAmt: [CGFloat] = [5, 8, 5]
-    private let breatheSec: [Double]  = [2.8, 2.4, 3.1]
-    private let amber = Color(red: 1.0, green: 0.72, blue: 0.28)
-
-    var body: some View {
-        ZStack {
-            Color.appBackground.ignoresSafeArea()
-
-            RadialGradient(
-                colors: [Color(red: 1.0, green: 0.72, blue: 0.28).opacity(0.10), Color.clear],
-                center: .bottom, startRadius: 0, endRadius: 520
-            )
-            .ignoresSafeArea()
-
-            VStack(spacing: 0) {
-                Spacer()
-
-                HStack(spacing: 36) {
-                    ForEach(Array(handIcons.enumerated()), id: \.offset) { index, icon in
-                        Image(systemName: icon)
-                            .font(.system(size: scaled(54), weight: .light))
-                            .foregroundColor(amber)
-                            .shadow(color: amber.opacity(0.45), radius: 18, y: 6)
-                            .scaleEffect(showHand[index] ? 1 : 0.05)
-                            .opacity(showHand[index] ? 1 : 0)
-                            .offset(y: breathe ? -breatheAmt[index] : breatheAmt[index])
-                            .animation(
-                                .easeInOut(duration: breatheSec[index]).repeatForever(autoreverses: true),
-                                value: breathe
-                            )
-                    }
-                }
-                .padding(.bottom, 44)
-
-                Text("Before zero,\nthere were fingers.")
-                    .font(.system(size: scaled(38), weight: .bold, design: .rounded))
-                    .foregroundColor(.textPrimary)
-                    .multilineTextAlignment(.center)
-                    .opacity(showHeadline ? 1 : 0)
-                    .offset(y: showHeadline ? 0 : 10)
-                    .padding(.bottom, 16)
-
-                Text("Long before calculators, humans counted\non their hands. The original interface\nbetween mind and number.")
-                    .font(.system(size: scaled(16), weight: .regular, design: .rounded))
-                    .foregroundColor(.textSecondary)
-                    .multilineTextAlignment(.center)
-                    .opacity(showBody ? 1 : 0)
-                    .offset(y: showBody ? 0 : 8)
-
-                Spacer()
-
-                Button(action: onContinue) {
-                    Text("Continue").primaryButtonStyle()
-                }
-                .padding(.bottom, 50)
-                .opacity(showButton ? 1 : 0)
-                .offset(y: showButton ? 0 : 16)
-            }
-            .padding(.horizontal, 32)
-        }
-        .onAppear {
-            for i in 0..<3 {
-                withAnimation(DesignTokens.springBouncy.delay(0.3 + Double(i) * 0.4)) {
-                    showHand[i] = true
-                }
-            }
-            Task {
-                try? await Task.sleep(for: .seconds(1.6))
-                breathe = true
-            }
-            withAnimation(DesignTokens.springGentle.delay(1.8)) { showHeadline = true }
-            withAnimation(DesignTokens.springGentle.delay(2.5)) { showBody = true }
-            withAnimation(DesignTokens.springGentle.delay(3.2)) { showButton = true }
-        }
     }
 }
 
@@ -1426,5 +1176,190 @@ private struct TutorialDigitBox: View {
         if confirmedDigit != nil { return Color.accentSuccess.opacity(0.5) }
         if isActive { return Color.accentPrimary.opacity(0.4) }
         return .borderSubtle
+    }
+}
+
+// MARK: - Tips Screen
+
+private struct TipsScreen: View {
+    let onFinish: () -> Void
+
+    @State private var showTitle = false
+    @State private var showCards = [false, false, false, false, false, false]
+
+    private let tips: [(icon: String, text: String, color: Color)] = [
+        ("hand.raised.slash",           "Lower your hands between questions to reset detection", .accentPrimary),
+        ("sun.max.fill",                "Play in a well-lit room for best hand detection",       .accentWarning),
+        ("viewfinder",                  "Keep your entire hand visible in frame",                .accentSuccess),
+        ("arrow.left.and.right.circle.fill", "Wrong number? Shift your hand slightly",          .accentPrimary),
+        ("hand.raised.fingers.spread.fill",  "Spread fingers clearly to avoid misreads",        .accentSuccess),
+        ("number.circle.fill",          "For two-digit answers, show the tens digit first",     .accentWarning),
+    ]
+
+    var body: some View {
+        ZStack {
+            Color.appBackground.ignoresSafeArea()
+
+            RadialGradient(
+                colors: [Color.accentWarning.opacity(0.07), Color.clear],
+                center: .top, startRadius: 0, endRadius: 420
+            )
+            .ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                Spacer()
+
+                VStack(spacing: 6) {
+                    Image(systemName: "lightbulb.fill")
+                        .font(.system(size: scaled(32), weight: .medium))
+                        .foregroundColor(.accentWarning)
+                    Text("Quick Tips")
+                        .font(.system(size: scaled(34), weight: .bold, design: .rounded))
+                        .foregroundColor(.textPrimary)
+                }
+                .opacity(showTitle ? 1 : 0)
+                .offset(y: showTitle ? 0 : 10)
+
+                Spacer().frame(height: 32)
+
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                    ForEach(Array(tips.enumerated()), id: \.offset) { index, tip in
+                        TipCard(icon: tip.icon, text: tip.text, color: tip.color)
+                            .opacity(showCards[index] ? 1 : 0)
+                            .scaleEffect(showCards[index] ? 1 : 0.88)
+                    }
+                }
+                .padding(.horizontal, 24)
+
+                Spacer()
+
+                Button(action: onFinish) {
+                    Text("Let's Play!")
+                        .primaryButtonStyle()
+                }
+                .padding(.bottom, 50)
+                .opacity(showCards.last == true ? 1 : 0)
+                .offset(y: showCards.last == true ? 0 : 12)
+            }
+        }
+        .onAppear {
+            withAnimation(DesignTokens.springGentle.delay(0.2)) { showTitle = true }
+            for i in 0..<tips.count {
+                withAnimation(DesignTokens.springBouncy.delay(0.5 + Double(i) * 0.12)) {
+                    showCards[i] = true
+                }
+            }
+        }
+    }
+}
+
+/// MARK: - Page Dots
+
+private struct PageDots: View {
+    let current: Int
+    let total: Int
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(0..<total, id: \.self) { i in
+                Capsule()
+                    .fill(i == current ? Color.accentPrimary : Color.white.opacity(0.25))
+                    .frame(width: i == current ? 18 : 6, height: 6)
+                    .animation(DesignTokens.springSnappy, value: current)
+            }
+        }
+    }
+}
+
+// MARK: - Tutorial View (replayable practice section, no story screens)
+
+struct TutorialView: View {
+    let onFinish: () -> Void
+
+    @State private var currentPage = 0
+    @StateObject private var practiceVM = PracticeViewModel()
+
+    private var showCamera: Bool { currentPage >= 1 }
+
+    var body: some View {
+        ZStack {
+            Color.appBackground.ignoresSafeArea()
+
+            if showCamera {
+                CameraPreviewView(session: practiceVM.cameraManager.captureSession)
+                    .ignoresSafeArea()
+
+                LinearGradient(
+                    colors: [
+                        Color.black.opacity(0.85),
+                        Color.black.opacity(0.45),
+                        Color.black.opacity(0.85)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
+            }
+
+            switch currentPage {
+            case 0:
+                CameraWarmupScreen(cameraManager: practiceVM.cameraManager, onReady: { goToPage(1) })
+                    .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
+            case 1:
+                PracticeScreen(practiceVM: practiceVM, targetNumber: 4, headline: "Show 4 fingers", onComplete: { goToPage(2) })
+                    .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
+            case 2:
+                PracticeScreen(practiceVM: practiceVM, targetNumber: 8, headline: "What about an 8?", subtitle: "Use both hands!", onComplete: { goToPage(3) })
+                    .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
+            case 3:
+                PracticeScreen(practiceVM: practiceVM, targetNumber: 7, headline: "3 + 4 = ?", subtitle: "Show the answer!", onComplete: { goToPage(4) })
+                    .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
+            case 4:
+                PracticeScreen(practiceVM: practiceVM, targetNumber: 0, headline: "Now show a 0", subtitle: "Close your fist!", icon: "✊", onComplete: { goToPage(5) })
+                    .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
+            case 5:
+                TwoDigitPracticeScreen(practiceVM: practiceVM, onComplete: { goToPage(6) })
+                    .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
+            case 6:
+                UndoPracticeScreen(practiceVM: practiceVM, onComplete: { goToPage(7) })
+                    .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
+            case 7:
+                TipsScreen(onFinish: onFinish)
+                    .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
+            default:
+                EmptyView()
+            }
+
+            // Close button + dots — visible once past warmup
+            if currentPage >= 1 {
+                VStack {
+                    HStack {
+                        Spacer()
+                        Button(action: onFinish) {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(.textSecondary)
+                                .padding(10)
+                                .background(Circle().fill(Color.white.opacity(0.1)))
+                        }
+                        .padding(.top, 16)
+                        .padding(.trailing, 16)
+                    }
+                    Spacer()
+                    PageDots(current: currentPage - 1, total: 7)
+                        .padding(.bottom, 20)
+                }
+                .allowsHitTesting(true)
+            }
+        }
+        .onAppear { practiceVM.start() }
+        .onDisappear { practiceVM.stop() }
+    }
+
+    private func goToPage(_ page: Int) {
+        withAnimation(DesignTokens.springGentle) {
+            currentPage = page
+        }
     }
 }

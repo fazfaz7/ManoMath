@@ -55,9 +55,11 @@ extension View {
 
 // MARK: - App Phase
 private enum AppPhase {
+    case splash
     case onboarding
     case loading
     case settings
+    case tutorial
     case warmup
     case countdown
     case playing
@@ -66,15 +68,31 @@ private enum AppPhase {
 // MARK: - ContentView
 struct ContentView: View {
     @StateObject private var viewModel = GameViewModel()
-    @State private var appPhase: AppPhase = .onboarding
+    @State private var appPhase: AppPhase = .splash
     @State private var gameSettings = GameSettings()
     @AppStorage("highScore") private var highScore = 0
+    @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
 
     var body: some View {
         Group {
         switch appPhase {
+        case .splash:
+            SplashView(
+                isFirstLaunch: !hasCompletedOnboarding,
+                onPlay: {
+                    withAnimation(DesignTokens.springGentle) {
+                        appPhase = .settings
+                    }
+                },
+                onLearn: {
+                    withAnimation(DesignTokens.springGentle) {
+                        appPhase = hasCompletedOnboarding ? .tutorial : .onboarding
+                    }
+                }
+            )
         case .onboarding:
             OnboardingView(onFinish: {
+                hasCompletedOnboarding = true
                 withAnimation(DesignTokens.springGentle) {
                     appPhase = .loading
                 }
@@ -90,8 +108,18 @@ struct ContentView: View {
                         }
                     }
                 }
+        case .tutorial:
+            TutorialView(onFinish: {
+                withAnimation(DesignTokens.springGentle) {
+                    appPhase = .settings
+                }
+            })
         case .settings:
-            SettingsScreen(settings: $gameSettings, onStart: {
+            SettingsScreen(settings: $gameSettings, onHowToPlay: {
+                withAnimation(DesignTokens.springGentle) {
+                    appPhase = .tutorial
+                }
+            }, onStart: {
                 viewModel.startGame()
                 withAnimation(DesignTokens.springSnappy) {
                     // Skip warmup if camera is already running (Play Again case)
@@ -770,6 +798,7 @@ struct SingleDigitBox: View {
 // MARK: - Settings Screen (Full Page)
 struct SettingsScreen: View {
     @Binding var settings: GameSettings
+    let onHowToPlay: () -> Void
     let onStart: () -> Void
 
     @State private var iconFloat = false
@@ -787,6 +816,20 @@ struct SettingsScreen: View {
                 endRadius: 500
             )
             .ignoresSafeArea()
+
+            // How to Play icon — top-trailing corner
+            VStack {
+                HStack {
+                    Spacer()
+                    Button(action: onHowToPlay) {
+                        Image(systemName: "questionmark.circle")
+                            .font(.system(size: scaled(22), weight: .medium))
+                            .foregroundColor(.textSecondary)
+                            .padding(16)
+                    }
+                }
+                Spacer()
+            }
 
             VStack(spacing: 0) {
                 Spacer()
@@ -876,46 +919,6 @@ struct SettingsScreen: View {
                 )
                 .padding(.horizontal, 24)
 
-                Spacer().frame(height: 28)
-
-                // Tips strip
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(spacing: 5) {
-                        Image(systemName: "lightbulb.fill")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(.accentWarning)
-                        Text("TIPS")
-                            .font(.system(size: 12, weight: .bold, design: .rounded))
-                            .foregroundColor(.textSecondary)
-                    }
-                    .padding(.horizontal, 28)
-
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 10) {
-                            Spacer().frame(width: 14)
-                            TipCard(icon: "hand.raised.slash",
-                                    text: "Lower your hands between questions to reset detection",
-                                    color: .accentPrimary)
-                            TipCard(icon: "sun.max.fill",
-                                    text: "Play in a well-lit room for best hand detection",
-                                    color: .accentWarning)
-                            TipCard(icon: "viewfinder",
-                                    text: "Keep your entire hand visible in frame when answering",
-                                    color: .accentSuccess)
-                            TipCard(icon: "arrow.left.and.right.circle.fill",
-                                    text: "Wrong number shown? Shift your hand slightly",
-                                    color: .accentPrimary)
-                            TipCard(icon: "hand.raised.fingers.spread.fill",
-                                    text: "Spread your fingers clearly to avoid misreads",
-                                    color: .accentSuccess)
-                            TipCard(icon: "number.circle.fill",
-                                    text: "For two-digit answers, show the tens digit first",
-                                    color: .accentWarning)
-                            Spacer().frame(width: 14)
-                        }
-                    }
-                }
-
                 Spacer()
 
                 // Start button
@@ -932,7 +935,7 @@ struct SettingsScreen: View {
 }
 
 // MARK: - Tip Card
-private struct TipCard: View {
+struct TipCard: View {
     let icon: String
     let text: String
     let color: Color
@@ -949,7 +952,7 @@ private struct TipCard: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(14)
-        .frame(width: 190, alignment: .topLeading)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
         .background(
             RoundedRectangle(cornerRadius: DesignTokens.radiusMedium)
                 .fill(Color.cardBackground)
