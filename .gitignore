@@ -1,0 +1,36 @@
+# Xcode
+*.xccheckout
+*.moved-aside
+*.xcuserdata
+*.xcscmblueprint
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+*.pbxuser
+xcuserdata/
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Build
+build/
+DerivedData/
+*.build/
+
+# Swift Package Manager
+.build/
+.swiftpm/xcode/
+
+# CocoaPods
+Pods/
+Podfile.lock
+
+# Carthage
+Carthage/Build/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
