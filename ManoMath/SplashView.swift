@@ -38,6 +38,93 @@ private struct FloatingSymbol: View {
     }
 }
 
+// MARK: - Daily Challenge Card
+
+struct DailyChallengeCard: View {
+    let hasPlayedToday: Bool
+    let lastScore: Int
+    let isLoading: Bool
+    let onPlay: () -> Void
+    let onViewLeaderboard: () -> Void
+
+    var body: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "star.fill")
+                    .foregroundColor(.accentWarning)
+                Text("Daily Challenge")
+                    .font(.system(size: scaled(17), weight: .bold, design: .rounded))
+                    .foregroundColor(.textPrimary)
+                Spacer()
+                if hasPlayedToday {
+                    Text("Done")
+                        .font(.system(size: scaled(12), weight: .semibold, design: .rounded))
+                        .foregroundColor(.accentSuccess)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(Color.accentSuccess.opacity(0.15)))
+                }
+            }
+
+            if hasPlayedToday {
+                HStack {
+                    Text("Today's score: \(lastScore)")
+                        .font(.system(size: scaled(14), weight: .medium, design: .rounded))
+                        .foregroundColor(.textSecondary)
+                    Spacer()
+                    Button(action: onViewLeaderboard) {
+                        Label("Leaderboard", systemImage: "chart.bar.fill")
+                            .font(.system(size: scaled(13), weight: .semibold, design: .rounded))
+                            .foregroundColor(.accentWarning)
+                    }
+                }
+            } else {
+                Text("Same problems for everyone, worldwide.")
+                    .font(.system(size: scaled(13), weight: .regular, design: .rounded))
+                    .foregroundColor(.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Button(action: onPlay) {
+                    Group {
+                        if isLoading {
+                            HStack(spacing: 8) {
+                                ProgressView().tint(.appBackground)
+                                Text("Connecting...")
+                                    .font(.system(size: scaled(15), weight: .bold, design: .rounded))
+                                    .foregroundColor(.appBackground)
+                            }
+                        } else {
+                            Label("Start Today's Challenge", systemImage: "play.fill")
+                                .font(.system(size: scaled(15), weight: .bold, design: .rounded))
+                                .foregroundColor(.appBackground)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, scaled(10))
+                    .background(
+                        RoundedRectangle(cornerRadius: DesignTokens.radiusSmall)
+                            .fill(LinearGradient(
+                                colors: [.accentWarning, Color(red: 1.0, green: 0.5, blue: 0.2)],
+                                startPoint: .topLeading, endPoint: .bottomTrailing
+                            ))
+                    )
+                }
+                .disabled(isLoading)
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: DesignTokens.radiusMedium)
+                .fill(Color.cardBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: DesignTokens.radiusMedium)
+                        .stroke(Color.accentWarning.opacity(0.25), lineWidth: 1)
+                )
+        )
+        .frame(maxWidth: scaled(300))
+    }
+}
+
 // MARK: - Splash View
 
 struct SplashView: View {

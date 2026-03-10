@@ -101,6 +101,12 @@ class GameViewModel: ObservableObject {
     /// Generates math challenges
     private let challengeGenerator = MathChallengeGenerator()
 
+    /// Whether current session is a daily challenge
+    @Published var isDailyMode: Bool = false
+
+    /// Seeded RNG for daily mode — nil in free-play
+    private var dailyRNG: (any RandomNumberGenerator)?
+
     // MARK: - Private Properties
 
     /// Stores Combine subscriptions
@@ -133,8 +139,8 @@ class GameViewModel: ObservableObject {
     // MARK: - Initialization
 
     init() {
-        // Generate the first challenge
-        currentChallenge = challengeGenerator.generateChallenge()
+        var nilRNG: (any RandomNumberGenerator)? = nil
+        currentChallenge = challengeGenerator.generateChallenge(using: &nilRNG)
 
         // Setup observation of hand detection results
         setupSubscriptions()
@@ -331,7 +337,7 @@ class GameViewModel: ObservableObject {
 
     /// Generate a new math challenge
     private func generateNewChallenge() {
-        currentChallenge = challengeGenerator.generateChallenge()
+        currentChallenge = challengeGenerator.generateChallenge(using: &dailyRNG)
         confirmedTensDigit = nil
         confirmedOnesDigit = nil
         wasCorrect = nil
@@ -349,7 +355,9 @@ class GameViewModel: ObservableObject {
     // MARK: - Lifecycle
 
     /// Start the game session (camera only, waits for user to tap Start)
-    func startGame() {
+    func startGame(dailyMode: Bool = false) {
+        isDailyMode = dailyMode
+        dailyRNG = nil
         cameraManager.startSession()
         score = 0
         challengesCompleted = 0
@@ -367,10 +375,10 @@ class GameViewModel: ObservableObject {
     }
 
     /// Called when user taps Start — applies settings, begins countdown and first challenge
-    func beginCountdown(with settings: GameSettings) {
+    func beginCountdown(with settings: GameSettings, rng: (any RandomNumberGenerator)? = nil) {
         challengeGenerator.apply(settings)
+        dailyRNG = rng
         timeRemaining = 30
-
         isPreGame = false
         generateNewChallenge()
         startTimer()

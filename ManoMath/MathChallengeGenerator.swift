@@ -1,5 +1,31 @@
 import Foundation
 
+// MARK: - Seeded RNG (xorshift64)
+
+struct SeededRandomNumberGenerator: RandomNumberGenerator {
+    private var state: UInt64
+
+    init(seed: UInt64) {
+        self.state = seed == 0 ? 1 : seed
+    }
+
+    mutating func next() -> UInt64 {
+        state ^= state << 13
+        state ^= state >> 7
+        state ^= state << 17
+        return state
+    }
+
+    /// Seed derived from today's date at UTC midnight — same value globally on the same calendar day.
+    static func dailySeed() -> UInt64 {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(secondsFromGMT: 0)!
+        let comps = cal.dateComponents([.year, .month, .day], from: Date())
+        let startOfDay = cal.date(from: comps) ?? Date()
+        return UInt64(startOfDay.timeIntervalSince1970)
+    }
+}
+
 // MARK: - Game Settings
 
 enum HandMode: String, CaseIterable {
@@ -23,43 +49,30 @@ struct GameSettings {
         case .hard: return 99
         }
     }
+
+    static let daily = GameSettings(
+        difficulty: .medium,
+        operations: Set(MathChallengeGenerator.OperationType.allCases),
+        handMode: .both
+    )
 }
 
 // MARK: - MathChallenge
-/// Represents a single math challenge with its question and answer
+
 struct MathChallenge: Equatable {
     let id = UUID()
-
-    /// The text to display (e.g., "15 + 18")
     let questionText: String
-
-    /// The correct answer to the problem
     let answer: Int
 
-    /// Whether this answer requires two-digit input (11-99)
-    var requiresTwoDigits: Bool {
-        return answer > 10
-    }
-
-    /// The tens digit of the answer (0-9)
-    var tensDigit: Int {
-        return (answer / 10) % 10
-    }
-
-    /// The ones digit of the answer (0-9)
-    var onesDigit: Int {
-        return answer % 10
-    }
+    var requiresTwoDigits: Bool { answer > 10 }
+    var tensDigit: Int { (answer / 10) % 10 }
+    var onesDigit: Int { answer % 10 }
 }
 
 // MARK: - MathChallengeGenerator
-/// Generates random math challenges for the game.
-/// Supports addition, subtraction, multiplication, and division.
+
 class MathChallengeGenerator {
 
-    // MARK: - Operation Types
-
-    /// The type of math operations available
     enum OperationType: CaseIterable {
         case addition
         case subtraction
@@ -67,180 +80,158 @@ class MathChallengeGenerator {
         case division
     }
 
-    /// Current difficulty level affects number ranges
     enum Difficulty {
-        case easy       // Answers 0-10, simple operations
-        case medium     // Answers 0-30, all operations
-        case hard       // Answers 0-99, larger numbers
+        case easy
+        case medium
+        case hard
     }
 
-    /// Current difficulty setting
     var difficulty: Difficulty = .medium
-
-    /// Which operations to include (default: all four)
     var allowedOperations: [OperationType] = [.addition, .subtraction, .multiplication, .division]
-
-    /// Optional max answer cap (e.g. 5 for single-hand mode)
     var maxAnswer: Int? = nil
 
-    // MARK: - Configuration
-
-    /// Apply a GameSettings struct to this generator
     func apply(_ settings: GameSettings) {
         difficulty = settings.difficulty
-        allowedOperations = Array(settings.operations)
+        // Filter from a fixed order so the array is always deterministic —
+        // Set iteration order is random, which would break seeded RNG reproducibility.
+        let fixed: [OperationType] = [.addition, .subtraction, .multiplication, .division]
+        allowedOperations = fixed.filter { settings.operations.contains($0) }
         if allowedOperations.isEmpty { allowedOperations = [.addition] }
         maxAnswer = settings.handMode.isSingleHand ? 5 : nil
     }
 
     // MARK: - Generation
 
-    /// Generates a new random math challenge based on current settings
-    /// - Returns: A new MathChallenge
-    func generateChallenge() -> MathChallenge {
-        // If max answer is capped (single-hand), use dedicated generator
+    func generateChallenge(using rng: inout (any RandomNumberGenerator)?) -> MathChallenge {
         if let cap = maxAnswer {
-            return generateCappedChallenge(maxAnswer: cap)
+            return generateCappedChallenge(maxAnswer: cap, rng: &rng)
         }
-
-        let operation = allowedOperations.randomElement() ?? .addition
-
+        let operation = randomElement(allowedOperations, rng: &rng) ?? .addition
         switch difficulty {
-        case .easy:
-            return generateEasyChallenge(operation: operation)
-        case .medium:
-            return generateMediumChallenge(operation: operation)
-        case .hard:
-            return generateHardChallenge(operation: operation)
+        case .easy:   return generateEasyChallenge(operation: operation, rng: &rng)
+        case .medium: return generateMediumChallenge(operation: operation, rng: &rng)
+        case .hard:   return generateHardChallenge(operation: operation, rng: &rng)
         }
     }
 
-    // MARK: - Capped Challenges (single-hand, answers 0-maxAnswer)
+    // MARK: - RNG Helpers
 
-    private func generateCappedChallenge(maxAnswer cap: Int) -> MathChallenge {
-        let operation = allowedOperations.randomElement() ?? .addition
+    private func randomInt(in range: ClosedRange<Int>, rng: inout (any RandomNumberGenerator)?) -> Int {
+        if var r = rng {
+            let value = Int.random(in: range, using: &r)
+            rng = r
+            return value
+        }
+        return Int.random(in: range)
+    }
+
+    private func randomElement<T>(_ array: [T], rng: inout (any RandomNumberGenerator)?) -> T? {
+        guard !array.isEmpty else { return nil }
+        if var r = rng {
+            let value = array.randomElement(using: &r)
+            rng = r
+            return value
+        }
+        return array.randomElement()
+    }
+
+    // MARK: - Capped Challenges
+
+    private func generateCappedChallenge(maxAnswer cap: Int, rng: inout (any RandomNumberGenerator)?) -> MathChallenge {
+        let operation = randomElement(allowedOperations, rng: &rng) ?? .addition
         switch operation {
         case .addition:
-            let answer = Int.random(in: 0...cap)
-            let a = Int.random(in: 0...answer)
+            let answer = randomInt(in: 0...cap, rng: &rng)
+            let a = randomInt(in: 0...answer, rng: &rng)
             return MathChallenge(questionText: "\(a) + \(answer - a)", answer: answer)
         case .subtraction:
-            let answer = Int.random(in: 0...cap)
-            let b = Int.random(in: 0...cap)
+            let answer = randomInt(in: 0...cap, rng: &rng)
+            let b = randomInt(in: 0...cap, rng: &rng)
             return MathChallenge(questionText: "\(answer + b) − \(b)", answer: answer)
         case .multiplication:
-            let answer = Int.random(in: 0...cap)
+            let answer = randomInt(in: 0...cap, rng: &rng)
             let divisors = (1...9).filter { answer == 0 || answer % $0 == 0 || $0 == 1 }
-            let b = divisors.randomElement() ?? 1
+            let b = randomElement(divisors, rng: &rng) ?? 1
             let a = answer / b
             if a * b == answer && a <= 12 {
                 return MathChallenge(questionText: "\(a) × \(b)", answer: answer)
             }
             return MathChallenge(questionText: "1 × \(answer)", answer: answer)
         case .division:
-            let answer = Int.random(in: 1...cap)
-            let divisor = Int.random(in: 1...5)
+            let answer = randomInt(in: 1...cap, rng: &rng)
+            let divisor = randomInt(in: 1...5, rng: &rng)
             return MathChallenge(questionText: "\(answer * divisor) ÷ \(divisor)", answer: answer)
         }
     }
 
-    // MARK: - Easy Challenges (Answers 0-10)
+    // MARK: - Easy (0–10)
 
-    private func generateEasyChallenge(operation: OperationType) -> MathChallenge {
+    private func generateEasyChallenge(operation: OperationType, rng: inout (any RandomNumberGenerator)?) -> MathChallenge {
         switch operation {
         case .addition:
-            let answer = Int.random(in: 0...10)
-            let firstNumber = Int.random(in: 0...answer)
-            let secondNumber = answer - firstNumber
-            return MathChallenge(questionText: "\(firstNumber) + \(secondNumber)", answer: answer)
-
+            let answer = randomInt(in: 0...10, rng: &rng)
+            let a = randomInt(in: 0...answer, rng: &rng)
+            return MathChallenge(questionText: "\(a) + \(answer - a)", answer: answer)
         case .subtraction:
-            let answer = Int.random(in: 0...10)
-            let secondNumber = Int.random(in: 0...10)
-            let firstNumber = answer + secondNumber
-            return MathChallenge(questionText: "\(firstNumber) − \(secondNumber)", answer: answer)
-
+            let answer = randomInt(in: 0...10, rng: &rng)
+            let b = randomInt(in: 0...10, rng: &rng)
+            return MathChallenge(questionText: "\(answer + b) − \(b)", answer: answer)
         case .multiplication:
-            // Easy: small multiplications (0-10 answers)
             let pairs: [(Int, Int)] = [
-                (0, 5), (1, 5), (2, 2), (2, 3), (2, 4), (2, 5),
-                (3, 2), (3, 3), (1, 8), (1, 9), (1, 10), (5, 2)
+                (0,5),(1,5),(2,2),(2,3),(2,4),(2,5),(3,2),(3,3),(1,8),(1,9),(1,10),(5,2)
             ]
-            let (a, b) = pairs.randomElement()!
+            let (a, b) = randomElement(pairs, rng: &rng)!
             return MathChallenge(questionText: "\(a) × \(b)", answer: a * b)
-
         case .division:
-            // Easy: simple divisions with answers 0-10
-            let answer = Int.random(in: 1...10)
-            let divisor = Int.random(in: 1...5)
-            let dividend = answer * divisor
-            return MathChallenge(questionText: "\(dividend) ÷ \(divisor)", answer: answer)
+            let answer = randomInt(in: 1...10, rng: &rng)
+            let divisor = randomInt(in: 1...5, rng: &rng)
+            return MathChallenge(questionText: "\(answer * divisor) ÷ \(divisor)", answer: answer)
         }
     }
 
-    // MARK: - Medium Challenges (Answers 0-30)
+    // MARK: - Medium (0–30)
 
-    private func generateMediumChallenge(operation: OperationType) -> MathChallenge {
+    private func generateMediumChallenge(operation: OperationType, rng: inout (any RandomNumberGenerator)?) -> MathChallenge {
         switch operation {
         case .addition:
-            let answer = Int.random(in: 0...30)
-            let maxFirst = min(answer, 20)
-            let firstNumber = Int.random(in: 0...maxFirst)
-            let secondNumber = answer - firstNumber
-            return MathChallenge(questionText: "\(firstNumber) + \(secondNumber)", answer: answer)
-
+            let answer = randomInt(in: 0...30, rng: &rng)
+            let a = randomInt(in: 0...min(answer, 20), rng: &rng)
+            return MathChallenge(questionText: "\(a) + \(answer - a)", answer: answer)
         case .subtraction:
-            let answer = Int.random(in: 0...30)
-            let secondNumber = Int.random(in: 0...20)
-            let firstNumber = answer + secondNumber
-            return MathChallenge(questionText: "\(firstNumber) − \(secondNumber)", answer: answer)
-
+            let answer = randomInt(in: 0...30, rng: &rng)
+            let b = randomInt(in: 0...20, rng: &rng)
+            return MathChallenge(questionText: "\(answer + b) − \(b)", answer: answer)
         case .multiplication:
-            // Medium: times tables up to 6×6 (max answer 36, but we cap at 30)
-            let a = Int.random(in: 2...6)
-            let maxB = min(6, 30 / a)
-            let b = Int.random(in: 1...maxB)
+            let a = randomInt(in: 2...6, rng: &rng)
+            let b = randomInt(in: 1...min(6, 30 / a), rng: &rng)
             return MathChallenge(questionText: "\(a) × \(b)", answer: a * b)
-
         case .division:
-            // Medium: divisions with answers up to 15
-            let answer = Int.random(in: 1...15)
-            let divisor = Int.random(in: 2...6)
-            let dividend = answer * divisor
-            return MathChallenge(questionText: "\(dividend) ÷ \(divisor)", answer: answer)
+            let answer = randomInt(in: 1...15, rng: &rng)
+            let divisor = randomInt(in: 2...6, rng: &rng)
+            return MathChallenge(questionText: "\(answer * divisor) ÷ \(divisor)", answer: answer)
         }
     }
 
-    // MARK: - Hard Challenges (Answers 0-99)
+    // MARK: - Hard (0–99)
 
-    private func generateHardChallenge(operation: OperationType) -> MathChallenge {
+    private func generateHardChallenge(operation: OperationType, rng: inout (any RandomNumberGenerator)?) -> MathChallenge {
         switch operation {
         case .addition:
-            let answer = Int.random(in: 20...99)
-            let maxFirst = min(answer, 60)
-            let firstNumber = Int.random(in: 10...maxFirst)
-            let secondNumber = answer - firstNumber
-            return MathChallenge(questionText: "\(firstNumber) + \(secondNumber)", answer: answer)
-
+            let answer = randomInt(in: 20...99, rng: &rng)
+            let a = randomInt(in: 10...min(answer, 60), rng: &rng)
+            return MathChallenge(questionText: "\(a) + \(answer - a)", answer: answer)
         case .subtraction:
-            let answer = Int.random(in: 10...99)
-            let secondNumber = Int.random(in: 10...50)
-            let firstNumber = answer + secondNumber
-            return MathChallenge(questionText: "\(firstNumber) − \(secondNumber)", answer: answer)
-
+            let answer = randomInt(in: 10...99, rng: &rng)
+            let b = randomInt(in: 10...50, rng: &rng)
+            return MathChallenge(questionText: "\(answer + b) − \(b)", answer: answer)
         case .multiplication:
-            // Hard: larger times tables (answers up to 99)
-            let a = Int.random(in: 3...12)
-            let maxB = min(12, 99 / a)
-            let b = Int.random(in: 2...maxB)
+            let a = randomInt(in: 3...12, rng: &rng)
+            let b = randomInt(in: 2...min(12, 99 / a), rng: &rng)
             return MathChallenge(questionText: "\(a) × \(b)", answer: a * b)
-
         case .division:
-            // Hard: divisions with answers up to 30
-            let answer = Int.random(in: 5...30)
-            let divisor = Int.random(in: 2...9)
-            let dividend = answer * divisor
-            return MathChallenge(questionText: "\(dividend) ÷ \(divisor)", answer: answer)
+            let answer = randomInt(in: 5...30, rng: &rng)
+            let divisor = randomInt(in: 2...9, rng: &rng)
+            return MathChallenge(questionText: "\(answer * divisor) ÷ \(divisor)", answer: answer)
         }
     }
 }

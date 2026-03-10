@@ -68,10 +68,22 @@ private enum AppPhase {
 // MARK: - ContentView
 struct ContentView: View {
     @StateObject private var viewModel = GameViewModel()
+    @EnvironmentObject private var gameCenterManager: GameCenterManager
     @State private var appPhase: AppPhase = .splash
+    @State private var isDailyMode = false
+    @State private var pendingDailyChallenge = false
     @State private var gameSettings = GameSettings()
     @AppStorage("highScore") private var highScore = 0
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
+    @AppStorage("lastDailyChallengeDate") private var lastDailyChallengeDate = ""
+    @AppStorage("lastDailyChallengeScore") private var lastDailyChallengeScore = 0
+
+    private var hasPlayedTodaysDailyChallenge: Bool {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        return lastDailyChallengeDate == formatter.string(from: Date())
+    }
 
     var body: some View {
         Group {
@@ -80,9 +92,7 @@ struct ContentView: View {
             SplashView(
                 isFirstLaunch: !hasCompletedOnboarding,
                 onPlay: {
-                    withAnimation(DesignTokens.springGentle) {
-                        appPhase = .settings
-                    }
+                    withAnimation(DesignTokens.springGentle) { appPhase = .settings }
                 },
                 onLearn: {
                     withAnimation(DesignTokens.springGentle) {
@@ -115,17 +125,32 @@ struct ContentView: View {
                 }
             })
         case .settings:
-            SettingsScreen(settings: $gameSettings, onHowToPlay: {
-                withAnimation(DesignTokens.springGentle) {
-                    appPhase = .tutorial
-                }
-            }, onStart: {
-                viewModel.startGame()
-                withAnimation(DesignTokens.springSnappy) {
-                    // Skip warmup if camera is already running (Play Again case)
-                    appPhase = viewModel.cameraManager.isRunning ? .countdown : .warmup
-                }
-            })
+            SettingsScreen(
+                settings: $gameSettings,
+                onHowToPlay: {
+                    withAnimation(DesignTokens.springGentle) { appPhase = .tutorial }
+                },
+                onStart: {
+                    isDailyMode = false
+                    viewModel.startGame()
+                    withAnimation(DesignTokens.springSnappy) {
+                        appPhase = viewModel.cameraManager.isRunning ? .countdown : .warmup
+                    }
+                },
+                onDailyChallenge: {
+                    if gameCenterManager.isAuthenticated {
+                        launchDailyChallenge()
+                    } else {
+                        pendingDailyChallenge = true
+                    }
+                },
+                onViewLeaderboard: {
+                    gameCenterManager.showLeaderboard()
+                },
+                hasPlayedDailyToday: hasPlayedTodaysDailyChallenge,
+                lastDailyScore: lastDailyChallengeScore,
+                isDailyLoading: pendingDailyChallenge
+            )
         case .warmup:
             CameraWarmupScreen(cameraManager: viewModel.cameraManager, onReady: {
                 withAnimation(DesignTokens.springGentle) {
@@ -154,7 +179,14 @@ struct ContentView: View {
                     CountdownScreen(
                         isHandDetected: $viewModel.isHandDetected,
                         onGo: {
-                            viewModel.beginCountdown(with: gameSettings)
+                            if isDailyMode {
+                                var rng: (any RandomNumberGenerator)? = SeededRandomNumberGenerator(
+                                    seed: SeededRandomNumberGenerator.dailySeed()
+                                )
+                                viewModel.beginCountdown(with: .daily, rng: rng)
+                            } else {
+                                viewModel.beginCountdown(with: gameSettings)
+                            }
                             withAnimation(DesignTokens.springSnappy) {
                                 appPhase = .playing
                             }
@@ -173,6 +205,21 @@ struct ContentView: View {
         }
         .onDisappear {
             UIApplication.shared.isIdleTimerDisabled = false
+        }
+        .onChange(of: gameCenterManager.isAuthenticated) { _, isAuth in
+            if isAuth && pendingDailyChallenge {
+                pendingDailyChallenge = false
+                launchDailyChallenge()
+            }
+        }
+    }
+
+    private func launchDailyChallenge() {
+        isDailyMode = true
+        gameSettings = .daily
+        viewModel.startGame(dailyMode: true)
+        withAnimation(DesignTokens.springSnappy) {
+            appPhase = viewModel.cameraManager.isRunning ? .countdown : .warmup
         }
     }
 
@@ -284,17 +331,42 @@ struct ContentView: View {
 
             // Game over overlay
             if viewModel.isGameOver {
-                GameOverView(
-                    score: viewModel.score,
-                    challengesCompleted: viewModel.challengesCompleted,
-                    highScore: $highScore,
-                    onPlayAgain: {
-                        viewModel.restartGame()
-                        withAnimation(DesignTokens.springSnappy) {
-                            appPhase = .settings
+                if isDailyMode {
+                    DailyGameOverView(
+                        score: viewModel.score,
+                        challengesCompleted: viewModel.challengesCompleted,
+                        alreadySubmitted: hasPlayedTodaysDailyChallenge,
+                        onSubmit: {
+                            // Save today's result
+                            let formatter = DateFormatter()
+                            formatter.dateFormat = "yyyy-MM-dd"
+                            formatter.timeZone = TimeZone(secondsFromGMT: 0)
+                            lastDailyChallengeDate = formatter.string(from: Date())
+                            lastDailyChallengeScore = viewModel.score
+                            Task { await gameCenterManager.submitDailyScore(viewModel.score) }
+                            gameCenterManager.showLeaderboard()
+                        },
+                        onPlayAgain: {
+                            isDailyMode = false
+                            viewModel.restartGame()
+                            withAnimation(DesignTokens.springSnappy) {
+                                appPhase = .settings
+                            }
                         }
-                    }
-                )
+                    )
+                } else {
+                    GameOverView(
+                        score: viewModel.score,
+                        challengesCompleted: viewModel.challengesCompleted,
+                        highScore: $highScore,
+                        onPlayAgain: {
+                            viewModel.restartGame()
+                            withAnimation(DesignTokens.springSnappy) {
+                                appPhase = .settings
+                            }
+                        }
+                    )
+                }
             }
         }
         .animation(DesignTokens.springBouncy, value: viewModel.showTimeBonus)
@@ -800,6 +872,11 @@ struct SettingsScreen: View {
     @Binding var settings: GameSettings
     let onHowToPlay: () -> Void
     let onStart: () -> Void
+    let onDailyChallenge: () -> Void
+    let onViewLeaderboard: () -> Void
+    let hasPlayedDailyToday: Bool
+    let lastDailyScore: Int
+    let isDailyLoading: Bool
 
     @State private var iconFloat = false
 
@@ -808,7 +885,6 @@ struct SettingsScreen: View {
             Color.appBackground
                 .ignoresSafeArea()
 
-            // Subtle radial gradient background
             RadialGradient(
                 colors: [Color.accentPrimary.opacity(0.06), Color.clear],
                 center: .top,
@@ -854,7 +930,20 @@ struct SettingsScreen: View {
                         .foregroundColor(.textSecondary)
                 }
 
-                Spacer().frame(height: 36)
+                Spacer().frame(height: 24)
+
+                // Daily Challenge card
+                DailyChallengeCard(
+                    hasPlayedToday: hasPlayedDailyToday,
+                    lastScore: lastDailyScore,
+                    isLoading: isDailyLoading,
+                    onPlay: onDailyChallenge,
+                    onViewLeaderboard: onViewLeaderboard
+                )
+                .padding(.horizontal, 24)
+                .padding(.bottom, 16)
+
+                Spacer().frame(height: 12)
 
                 // Settings
                 VStack(spacing: 24) {
@@ -1269,6 +1358,126 @@ struct GameOverView: View {
         for i in 1...steps {
             DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * delay + 0.4) {
                 displayedScore = Int(Double(score) * Double(i) / Double(steps))
+            }
+        }
+    }
+}
+
+// MARK: - Daily Game Over View
+
+struct DailyGameOverView: View {
+    let score: Int
+    let challengesCompleted: Int
+    let alreadySubmitted: Bool
+    let onSubmit: () -> Void
+    let onPlayAgain: () -> Void
+
+    @State private var appeared = false
+    @State private var displayedScore = 0
+    @State private var showElements: [Bool] = Array(repeating: false, count: 5)
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.75)
+                .ignoresSafeArea()
+
+            VStack(spacing: 20) {
+                // Gold star icon
+                Image(systemName: "star.fill")
+                    .font(.system(size: scaled(44)))
+                    .foregroundColor(.accentWarning)
+                    .shadow(color: .accentWarning.opacity(0.6), radius: 12)
+                    .opacity(showElements[0] ? 1 : 0)
+                    .scaleEffect(showElements[0] ? 1 : 0.4)
+
+                Text("Daily Challenge")
+                    .font(.system(size: scaled(28), weight: .bold, design: .rounded))
+                    .foregroundColor(.textPrimary)
+                    .opacity(showElements[0] ? 1 : 0)
+
+                VStack(spacing: 4) {
+                    Text("Score")
+                        .font(.subheadline)
+                        .foregroundColor(.textSecondary)
+                    Text("\(displayedScore)")
+                        .font(.system(size: scaled(56), weight: .bold, design: .rounded))
+                        .foregroundStyle(
+                            LinearGradient(
+                                colors: [.accentWarning, Color(red: 1.0, green: 0.5, blue: 0.2)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                }
+                .opacity(showElements[1] ? 1 : 0)
+                .offset(y: showElements[1] ? 0 : 10)
+
+                Text("\(challengesCompleted) challenge\(challengesCompleted == 1 ? "" : "s") solved")
+                    .font(.subheadline)
+                    .foregroundColor(.textSecondary)
+                    .opacity(showElements[2] ? 1 : 0)
+
+                Divider().background(Color.borderSubtle)
+
+                if !alreadySubmitted {
+                    Button(action: onSubmit) {
+                        Label("Submit & View Leaderboard", systemImage: "chart.bar.fill")
+                            .font(.system(size: scaled(18), weight: .bold, design: .rounded))
+                            .foregroundColor(.appBackground)
+                            .frame(maxWidth: scaled(280))
+                            .padding(.vertical, scaled(14))
+                            .background(
+                                RoundedRectangle(cornerRadius: DesignTokens.radiusMedium)
+                                    .fill(LinearGradient(
+                                        colors: [.accentWarning, Color(red: 1.0, green: 0.5, blue: 0.2)],
+                                        startPoint: .topLeading, endPoint: .bottomTrailing
+                                    ))
+                                    .shadow(color: .accentWarning.opacity(0.4), radius: 10, y: 4)
+                            )
+                    }
+                    .opacity(showElements[3] ? 1 : 0)
+                    .offset(y: showElements[3] ? 0 : 10)
+                } else {
+                    Text("Score already submitted today")
+                        .font(.system(size: scaled(14), weight: .medium, design: .rounded))
+                        .foregroundColor(.textSecondary)
+                        .opacity(showElements[3] ? 1 : 0)
+                }
+
+                Button(action: onPlayAgain) {
+                    Text("Play Free Mode")
+                        .secondaryButtonStyle()
+                }
+                .opacity(showElements[4] ? 1 : 0)
+                .offset(y: showElements[4] ? 0 : 10)
+            }
+            .padding(32)
+            .background(
+                RoundedRectangle(cornerRadius: DesignTokens.radiusLarge)
+                    .fill(Color.cardBackground)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: DesignTokens.radiusLarge)
+                    .stroke(Color.accentWarning.opacity(0.3), lineWidth: 1)
+            )
+            .padding(.horizontal, 40)
+            .scaleEffect(appeared ? 1 : 0.6)
+            .offset(y: appeared ? 0 : 40)
+            .opacity(appeared ? 1 : 0)
+        }
+        .onAppear {
+            withAnimation(DesignTokens.springBouncy) { appeared = true }
+            for i in 0..<5 {
+                withAnimation(DesignTokens.springGentle.delay(Double(i) * 0.15 + 0.2)) {
+                    showElements[i] = true
+                }
+            }
+            let steps = 30
+            let delay = 1.0 / Double(steps)
+            for i in 1...steps {
+                DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * delay + 0.4) {
+                    displayedScore = Int(Double(score) * Double(i) / Double(steps))
+                }
             }
         }
     }
