@@ -11,6 +11,7 @@ import UIKit
 /// The main entry point for the Handy app.
 /// This is a mental math training game where users answer
 /// math problems using hand gestures captured by the camera.
+///  Testing my ci/cd!
 @main
 struct ManoMathApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
